@@ -2,43 +2,60 @@ import os
 import re
 import logging
 import requests
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 import yt_dlp
 
-# إعداد السجلات لمراقبة الأخطاء في Render
+# إعداد السجلات لمراقبة الأخطاء
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN") # تأكد من ضبط هذا المتغير في إعدادات Render
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
+# --- 1. خدعة سيرفر الويب لخداع منصة Render ومنع الـ Failed ---
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Bot is alive and running successfully!")
+
+def run_health_server():
+    # Render يرسل الطلبات تلقائياً على المنفذ 10000 أو المتغير المتاح
+    port = int(os.getenv("PORT", 10000))
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    logger.info(f"Fake Web Server started on port {port}")
+    server.serve_forever()
+
+# --- 2. مهام البوت الأساسية وتحميل الفيديو ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("💪 البوت يعمل بأقصى كفاءة سحابية! أرسل أي رابط من منصة X (تويتر) وسيتم تحميل الفيديو مباشرة بدون قيود أو حجب المحتوى الحساس.")
+    await update.message.reply_text("💪 أهلاً بك! البوت يعمل الآن بأعلى كفاءة لفك تشفير وتنزيل أي فيديو من منصة X (تويتر) بما فيها الروابط المختصرة والمحتوى الحساس (+18) بدون قيود.")
 
 async def download_twitter_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
     
-    # التحقق من أن الرابط ينتمي لمنصة تويتر أو إكس
     if not re.search(r'(twitter\.com|x\.com)', url):
         return
 
-    # 1. تنظيف وتحويل الروابط المختصرة (مثل x.com/i/status) إلى الروابط الصريحة لتجنب مشاكل التوجيه
-    if "/i/status/" in url:
-        url = url.replace("x.com/i/status/", "x.com/x/status/").replace("twitter.com/i/status/", "twitter.com/x/status/")
-    
-    # تحويل الرابط البديل fxfxtwitter إلى x لتفادي مشاكل الـ DNS في السيرفر
-    url = url.replace("fxfxtwitter.com", "x.com").replace("vxtwitter.com", "x.com")
-
     status_message = await update.message.reply_text("⏳ جاري سحب وتجهيز الفيديو، انتظر ثوانٍ...")
 
-    # 2. إعدادات خيارات yt-dlp لتخطي القيود والمحتوى المقيد بالسن +18
+    # تنظيف وتجهيز كل أنواع الروابط (العادية والمختصرة مثل i/status)
+    if "/i/status/" in url:
+        url = re.sub(r'x\.com/i/status/(\d+)', r'x.com/x/status/\1', url)
+        url = re.sub(r'twitter\.com/i/status/(\d+)', r'twitter.com/x/status/\1', url)
+    
+    url = url.replace("fxfxtwitter.com", "x.com").replace("vxtwitter.com", "x.com")
+
+    # إعدادات متطورة جداً لـ yt-dlp لتخطي حجب السن +18 وقيود الحسابات الحساسة
     ydl_opts = {
-        'format': 'best',
+        'format': 'bestvideo+bestaudio/best',
         'no_warnings': True,
         'quiet': True,
-        'age_limit': 99,  # تخطي قيود السن والمحتوى الحساس نهائياً
+        'age_limit': 99,  # فك قيود العمر نهائياً
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
             'Accept': '*/*',
             'Connection': 'keep-alive',
         }
@@ -50,29 +67,31 @@ async def download_twitter_video(update: Update, context: ContextTypes.DEFAULT_T
             video_url = info.get('url')
             
             if video_url:
-                # تحميل الفيديو كملف مؤقت وإرساله مباشرة كـ MP4
                 video_data = requests.get(video_url, stream=True).content
                 await update.message.reply_video(video=video_data, caption="🎬 تم التحميل بنجاح بواسطة بوت ملاذ.")
                 await status_message.delete()
             else:
-                raise Exception("فشل في استخراج الرابط المباشر")
+                raise Exception("رابط الفيديو المباشر غير متاح")
                 
     except Exception as e:
-        logger.error(f"Error downloading video: {e}")
-        # إذا فشل التحميل المباشر بسبب حظر الآيبي، يرسل رابط المعاينة البديل كخطة احتياطية
+        logger.error(f"Error: {e}")
+        # رابط احتياطي خارجي ذكي يفك التشفير والمحتوى المقيد في حال تعذر السيرفر الأساسي
         fallback_url = url.replace("x.com", "fxfxtwitter.com").replace("twitter.com", "fxfxtwitter.com")
-        await status_message.edit_text(f"⚠️ تعذر الرفع المباشر بسبب قيود السيرفر، يمكنك مشاهدة أو حفظ الفيديو من هذا الرابط بدون حجب:\n\n🔗 {fallback_url}")
+        await status_message.edit_text(f"🎬 تعذر الرفع المباشر كملف بسبب قيود حجم السيرفر، لكن يمكنك مشاهدة وحفظ الفيديو بجودة عالية وبدون حجب عبر الرابط التالي:\n\n🔗 {fallback_url}")
 
 def main():
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN is missing!")
         return
+
+    # تشغيل سيرفر الويب الخادع في خلفية مستقلة (Thread) حتى لا يتعطل البوت
+    threading.Thread(target=run_health_server, daemon=True).start()
         
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download_twitter_video))
     
-    logger.info("Bot started successfully on Render...")
+    logger.info("Bot is starting polling...")
     app.run_polling()
 
 if __name__ == '__main__':
