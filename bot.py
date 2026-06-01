@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
+# سيرفر وهمي للحفاظ على استقرار منصة Render
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -26,32 +27,25 @@ def run_health_server():
     server.serve_forever()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("💪 بوت ملاذ جاهز بكامل طاقته السحابية! أرسل أي رابط من منصة X (تويتر)، بما في ذلك الروابط المختصرة أو المحتوى الحساس، وسيتم رفعه لك مباشرة كملف فيديو.")
+    await update.message.reply_text("💪 بوت ملاذ جاهز وسريع! أرسل أي رابط من منصة X (تويتر) وسيتم رفعه لك مباشرة كملف فيديو داخل المحادثة.")
 
 async def download_twitter_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    original_url = update.message.text.strip()
+    url = update.message.text.strip()
     
-    if not re.search(r'(twitter\.com|x\.com)', original_url):
+    if not re.search(r'(twitter\.com|x\.com)', url):
         return
 
-    status_message = await update.message.reply_text("⏳ جاري سحب وتجهيز الفيديو، انتظر ثوانٍ...")
+    status_message = await update.message.reply_text("⏳ جاري استخراج وتحميل الفيديو، انتظر ثوانٍ...")
 
-    # استخراج الرقم التعريفي للفيديو بدقة لتخطي الروابط المختصرة (مثل i/status أو أي صيغة جوال)
-    tweet_id_match = re.search(r'status/(\d+)', original_url)
-    if tweet_id_match:
-        tweet_id = tweet_id_match.group(1)
-        url = f"https://x.com/i/status/{tweet_id}"
-    else:
-        url = original_url
-
-    # إعدادات متطورة ومجربة لتجاوز حظر المحتوى +18 والروابط الحساسة
+    # إعدادات قوية جداً لـ yt-dlp تضمن فك التشفير للروابط المختصرة والمحتوى المقيد
     ydl_opts = {
-        'format': 'best',
+        'format': 'bestsingle / bestvideo+bestaudio/best',
         'no_warnings': True,
         'quiet': True,
-        'age_limit': 99,  # كسر قيود العمر نهائياً
+        'age_limit': 99,
+        'skip_download': True,
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
             'Accept': '*/*',
             'Connection': 'keep-alive',
         }
@@ -60,21 +54,28 @@ async def download_twitter_video(update: Update, context: ContextTypes.DEFAULT_T
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-            video_url = info.get('url')
             
+            # محاولة جلب الرابط المباشر بأكثر من طريقة لضمان الملف
+            video_url = None
+            if 'url' in info:
+                video_url = info['url']
+            elif 'entries' in info and len(info['entries']) > 0:
+                video_url = info['entries'][0].get('url')
+            elif 'formats' in info and len(info['formats']) > 0:
+                video_url = info['formats'][-1].get('url')
+
             if video_url:
-                # تحميل الملف كبث ورفعه مباشرة لتلجرام بصيغة MP4
-                video_data = requests.get(video_url, stream=True).content
-                await update.message.reply_video(video=video_data, caption="🎬 تم التحميل بنجاح بواسطة بوت ملاذ.")
+                # إرسال الفيديو مباشرة باستخدام رابط البث لتجنب مشاكل حجم خوادم ريندر
+                await update.message.reply_video(video=video_url, caption="🎬 تم التحميل بنجاح بواسطة بوت ملاذ.")
                 await status_message.delete()
             else:
-                raise Exception()
+                raise Exception("No direct video url found")
                 
     except Exception as e:
-        logger.error(f"Error: {e}")
-        # خطة احتياطية في حال تعطل الصيغة المباشرة تماماً
+        logger.error(f"Download Error: {e}")
+        # إذا فشل السيرفر تماماً، يتم تقديم الرابط السريع كخيار بديل فوري
         fallback = url.replace("x.com", "fxfxtwitter.com").replace("twitter.com", "fxfxtwitter.com")
-        await status_message.edit_text(f"🎬 تعذر الرفع المباشر كملف، يمكنك مشاهدة وحفظ الفيديو بدون قيود عبر هذا الرابط البديل:\n\n🔗 {fallback}")
+        await status_message.edit_text(f"🎬 عذراً، هذا الفيديو محمي بشكل كامل أو حجمه كبير، يمكنك مشاهدته وحفظه مباشرة من الرابط التالي:\n\n🔗 {fallback}")
 
 def main():
     if not BOT_TOKEN: 
