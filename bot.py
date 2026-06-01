@@ -49,7 +49,7 @@ async def download_twitter_video(update: Update, context: ContextTypes.DEFAULT_T
 
     try:
         # استدعاء محرك Cobalt العالمي لكسر حماية وحظر تويتر وجلب الرابط الصريح
-        response = requests.post("https://api.cobalt.tools/", json=payload, headers={"Accept": "application/json", "Content-Type": "application/json"}, timeout=15)
+        response = requests.post("https://api.cobalt.tools/", json=payload, headers={"Accept": "application/json", "Content-Type": "application/json"}, timeout=190)
         result = response.json()
 
         if result.get("status") == "stream":
