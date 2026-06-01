@@ -1,1 +1,3 @@
-# twitter-downloader
+python-telegram-bot==22.7
+yt-dlp
+requests
