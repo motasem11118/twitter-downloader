@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# سيرفر وهمي للحفاظ على استقرار منصة Render ومنع الإغلاق
+# سيرفر الحفاظ على استقرار واستمرار الخدمة في Render
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -26,7 +26,7 @@ def run_health_server():
     server.serve_forever()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("💪 بوت ملاذ جاهز وسريع بأعلى كفاءة! أرسل أي رابط فيديو من منصة X (تويتر) وسيتم رفعه لك مباشرة كملف فيديو داخل المحادثة.")
+    await update.message.reply_text("💪 بوت ملاذ جاهز! أرسل أي رابط فيديو من منصة X (تويتر) وسيتم رفعه لك مباشرة داخل المحادثة كملف فيديو.")
 
 async def download_twitter_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
@@ -34,35 +34,38 @@ async def download_twitter_video(update: Update, context: ContextTypes.DEFAULT_T
     if not re.search(r'(twitter\.com|x\.com)', url):
         return
 
-    status_message = await update.message.reply_text("⏳ جاري استخراج وتحميل الفيديو مباشرة، انتظر ثوانٍ...")
+    status_message = await update.message.reply_text("⏳ جاري سحب وتحميل الفيديو مباشرة إلى تلجرام...")
+
+    # تنظيف وتوحيد روابط تويتر لضمان قبولها في محرك السحب
+    tweet_id_match = re.search(r'status/(\d+)', url)
+    if tweet_id_match:
+        url = f"https://x.com/i/status/{tweet_id_match.group(1)}"
+
+    payload = {
+        "url": url,
+        "videoQuality": "max", 
+        "filenamePattern": "classic"
+    }
 
     try:
-        # استخدام API وسيط قوي لتجاوز حظر خوادم تويتر تماماً
-        api_url = f"https://twitsave.com/info?url={url}"
-        response = requests.get(api_url, timeout=15)
-        html_content = response.text
+        # استدعاء محرك Cobalt العالمي لكسر حماية وحظر تويتر وجلب الرابط الصريح
+        response = requests.post("https://api.cobalt.tools/", json=payload, headers={"Accept": "application/json", "Content-Type": "application/json"}, timeout=15)
+        result = response.json()
 
-        # البحث عن رابط تحميل ملف الـ MP4 المباشر من صفحة twitsave
-        download_match = re.search(r'href="(https://[^"]+extid[^"]+)"', html_content)
-        
-        if not download_match:
-            # محاولة ثانية بنمط مختلف للرابط
-            download_match = re.search(r'href="(https://twitsave\.com/download[^"]+)"', html_content)
-
-        if download_match:
-            video_url = download_match.group(1).replace("&amp;", "&")
+        if result.get("status") == "stream":
+            video_url = result.get("url")
             
-            # إرسال الفيديو مباشرة إلى تلجرام عبر الرابط المستخرج دون استهلاك مساحة السيرفر
-            await update.message.reply_video(video=video_url, caption="🎬 تم التحميل بنجاح بواسطة بوت ملاذ.")
+            # الخدعة الكبرى: تمرير الرابط المباشر لتلجرام ليقوم بمعالجته ورفعه كملف مدمج داخل الشات فوراً
+            await update.message.reply_video(video=video_url, caption="🎬 تم التحميل بنجاح داخل تلجرام بواسطة بوت ملاذ.")
             await status_message.delete()
         else:
-            raise Exception("تعذر العثور على رابط تحميل مباشر")
+            raise Exception("Cobalt stream parsing failed")
 
     except Exception as e:
-        logger.error(f"خطأ في التحميل: {e}")
-        # إذا تعطل الـ API تماماً، نستخدم الخيار السريع والمضمون للمشاهدة
+        logger.error(f"Error occurred: {e}")
+        # خطة طوارئ سريعة للمشاهدة بدون الخروج من التلجرام في حال حدوث ضغط على السيرفر
         fallback = url.replace("x.com", "fxfxtwitter.com").replace("twitter.com", "fxfxtwitter.com")
-        await status_message.edit_text(f"🎬 تعذر الرفع المباشر كملف بسبب قيود المنصة، ولكن يمكنك مشاهدة وحفظ الفيديو مباشرة من هنا:\n\n🔗 {fallback}")
+        await status_message.edit_text(f"🎬 تعذر رفع الفيديو كملف حالياً، ولكن يمكنك تشغيله ومشاهدته مباشرة داخل تلجرام عبر هذا الرابط البديل:\n\n🔗 {fallback}")
 
 def main():
     if not BOT_TOKEN: 
